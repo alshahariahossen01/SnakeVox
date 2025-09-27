@@ -1,0 +1,6 @@
+#JSGF V1.0;
+grammar commands;
+
+public <direction> = up | down | left | right | restart;
+
+
