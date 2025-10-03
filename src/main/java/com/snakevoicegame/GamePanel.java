@@ -34,10 +34,11 @@ public final class GamePanel extends JPanel implements ActionListener {
 
     private char direction = 'R'; // U, D, L, R
     private boolean running = false;
+    private boolean paused = false;
     private int score = 0;
 
     private final Timer timer = new Timer(GAME_SPEED_MS, this);
-    private VoiceController voiceController;
+    private VoskVoiceController voiceController;
     private final ControlMode controlMode;
     private final GameMode gameMode;
     private final ScoreManager scoreManager = new ScoreManager();
@@ -67,11 +68,14 @@ public final class GamePanel extends JPanel implements ActionListener {
         setFocusable(true);
         this.controlMode = controlMode == null ? ControlMode.KEYBOARD : controlMode;
         this.gameMode = gameMode == null ? GameMode.CLASSIC : gameMode;
+        
+        // Always add key listener for pause functionality
+        addKeyListener(new KeyHandler());
+        
         if (this.controlMode == ControlMode.VOICE) {
-            voiceController = new VoiceController();
+            voiceController = new VoskVoiceController();
         } else {
             voiceController = null;
-            addKeyListener(new KeyHandler());
         }
         startGame();
     }
@@ -143,106 +147,239 @@ public final class GamePanel extends JPanel implements ActionListener {
         super.paintComponent(g);
         Graphics2D g2 = (Graphics2D) g.create();
         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+        // Draw header background with gradient
+        java.awt.GradientPaint headerGradient = new java.awt.GradientPaint(
+                0, 0, new Color(30, 30, 40),
+                0, 50, new Color(20, 20, 30)
+        );
+        g2.setPaint(headerGradient);
+        g2.fillRect(0, 0, getWidth(), 55);
 
         // Draw instruction at top-center
-        g2.setColor(Color.WHITE);
-        g2.setFont(getFont().deriveFont(Font.BOLD, 16f));
+        g2.setColor(new Color(220, 220, 255));
+        g2.setFont(getFont().deriveFont(Font.BOLD, 14f));
         String instruction = controlMode == ControlMode.VOICE
-                ? "Say UP, DOWN, LEFT, or RIGHT to move"
-                : "Use ARROW KEYS to move";
+                ? "Say UP, DOWN, LEFT, or RIGHT to move (P to pause)"
+                : "Use ARROW KEYS to move (P to pause)";
         FontMetrics fmInstr = g2.getFontMetrics();
         int instrX = (getWidth() - fmInstr.stringWidth(instruction)) / 2;
-        g2.drawString(instruction, instrX, 20);
+        g2.drawString(instruction, instrX, 18);
 
-        // Draw score at top-left
+        // Draw score at top-left with better styling
+        g2.setFont(getFont().deriveFont(Font.BOLD, 16f));
+        g2.setColor(new Color(255, 215, 0)); // Gold
         g2.drawString("Score: " + score, 10, 40);
 
         // Draw mode at top-right
+        g2.setColor(new Color(150, 200, 255));
         String modeText = "Mode: " + gameMode.name();
         int modeX = getWidth() - fmInstr.stringWidth(modeText) - 10;
         g2.drawString(modeText, modeX, 40);
 
-        // Draw food (bolt dot in gold, small dot in red)
-        if (isBoltFood) {
-            g2.setColor(new Color(255, 215, 0)); // gold
-        } else {
-            g2.setColor(new Color(220, 60, 60)); // red
+        // Draw voice status indicator if using voice control
+        if (controlMode == ControlMode.VOICE && voiceController != null) {
+            drawVoiceStatus(g2);
         }
-        g2.fillRect(foodX * TILE_SIZE, foodY * TILE_SIZE, TILE_SIZE, TILE_SIZE);
 
-        // Draw obstacles (labyrinth)
+        // Draw food with 3D effect
+        int fx = foodX * TILE_SIZE;
+        int fy = foodY * TILE_SIZE;
+        if (isBoltFood) {
+            // Gold bolt food with gradient
+            java.awt.GradientPaint foodGradient = new java.awt.GradientPaint(
+                    fx, fy, new Color(255, 230, 100),
+                    fx + TILE_SIZE, fy + TILE_SIZE, new Color(255, 180, 0)
+            );
+            g2.setPaint(foodGradient);
+            g2.fillOval(fx + 2, fy + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+            g2.setColor(new Color(255, 215, 0));
+            g2.setStroke(new java.awt.BasicStroke(2));
+            g2.drawOval(fx + 2, fy + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+        } else {
+            // Regular food with gradient
+            java.awt.GradientPaint foodGradient = new java.awt.GradientPaint(
+                    fx, fy, new Color(255, 100, 100),
+                    fx + TILE_SIZE, fy + TILE_SIZE, new Color(200, 40, 40)
+            );
+            g2.setPaint(foodGradient);
+            g2.fillOval(fx + 3, fy + 3, TILE_SIZE - 6, TILE_SIZE - 6);
+        }
+
+        // Draw obstacles (labyrinth) with 3D effect
         if (obstacleGrid != null) {
-            g2.setColor(new Color(80, 80, 80));
             for (int x = 0; x < GRID_COLS; x++) {
                 for (int y = 0; y < GRID_ROWS; y++) {
                     if (obstacleGrid[x][y]) {
-                        g2.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                        int ox = x * TILE_SIZE;
+                        int oy = y * TILE_SIZE;
+                        java.awt.GradientPaint obstacleGradient = new java.awt.GradientPaint(
+                                ox, oy, new Color(100, 100, 110),
+                                ox + TILE_SIZE, oy + TILE_SIZE, new Color(60, 60, 70)
+                        );
+                        g2.setPaint(obstacleGradient);
+                        g2.fillRect(ox, oy, TILE_SIZE, TILE_SIZE);
+                        g2.setColor(new Color(40, 40, 50));
+                        g2.drawRect(ox, oy, TILE_SIZE - 1, TILE_SIZE - 1);
                     }
                 }
             }
         }
 
-        // Draw snake
+        // Draw snake with gradient and rounded edges
         for (int i = 0; i < snakeLength; i++) {
+            int sx = snakeX[i] * TILE_SIZE;
+            int sy = snakeY[i] * TILE_SIZE;
+            
             if (i == 0) {
-                g2.setColor(new Color(120, 200, 120)); // head
+                // Head with bright gradient
+                java.awt.GradientPaint headGradient = new java.awt.GradientPaint(
+                        sx, sy, new Color(140, 255, 140),
+                        sx + TILE_SIZE, sy + TILE_SIZE, new Color(80, 200, 80)
+                );
+                g2.setPaint(headGradient);
+                g2.fillRoundRect(sx + 1, sy + 1, TILE_SIZE - 2, TILE_SIZE - 2, 6, 6);
+                g2.setColor(new Color(60, 180, 60));
+                g2.setStroke(new java.awt.BasicStroke(2));
+                g2.drawRoundRect(sx + 1, sy + 1, TILE_SIZE - 2, TILE_SIZE - 2, 6, 6);
             } else {
-                g2.setColor(new Color(80, 160, 80)); // body
+                // Body with subtle gradient
+                java.awt.GradientPaint bodyGradient = new java.awt.GradientPaint(
+                        sx, sy, new Color(100, 200, 100),
+                        sx + TILE_SIZE, sy + TILE_SIZE, new Color(60, 160, 60)
+                );
+                g2.setPaint(bodyGradient);
+                g2.fillRoundRect(sx + 2, sy + 2, TILE_SIZE - 4, TILE_SIZE - 4, 4, 4);
             }
-            g2.fillRect(snakeX[i] * TILE_SIZE, snakeY[i] * TILE_SIZE, TILE_SIZE, TILE_SIZE);
         }
 
         if (!running) {
             drawGameOver(g2);
+        } else if (paused) {
+            drawPaused(g2);
         }
         g2.dispose();
+    }
+
+    private void drawVoiceStatus(Graphics2D g2) {
+        String status = voiceController.getStatusMessage();
+        boolean isListening = voiceController.isListening();
+        
+        // Draw status indicator in top-right corner
+        int x = getWidth() - 150;
+        int y = 15;
+        
+        // Draw background
+        g2.setColor(new Color(0, 0, 0, 100));
+        g2.fillRoundRect(x - 5, y - 12, 145, 22, 8, 8);
+        
+        // Draw listening indicator
+        if (isListening) {
+            g2.setColor(new Color(100, 255, 100));
+            g2.fillOval(x, y - 6, 12, 12);
+            g2.setColor(new Color(50, 200, 50));
+            g2.drawOval(x, y - 6, 12, 12);
+        } else {
+            g2.setColor(new Color(150, 150, 150));
+            g2.fillOval(x, y - 6, 12, 12);
+        }
+        
+        // Draw status text
+        g2.setColor(isListening ? new Color(200, 255, 200) : new Color(200, 200, 200));
+        g2.setFont(getFont().deriveFont(Font.PLAIN, 11f));
+        g2.drawString(status, x + 18, y + 4);
+    }
+
+    private void drawPaused(Graphics2D g2) {
+        g2.setColor(new Color(0, 0, 0, 150));
+        g2.fillRect(0, 0, getWidth(), getHeight());
+        
+        g2.setColor(new Color(255, 255, 100));
+        g2.setFont(getFont().deriveFont(Font.BOLD, 56f));
+        FontMetrics fm = g2.getFontMetrics();
+        String pausedText = "PAUSED";
+        int x = (getWidth() - fm.stringWidth(pausedText)) / 2;
+        int y = getHeight() / 2;
+        
+        // Draw shadow
+        g2.setColor(new Color(0, 0, 0, 100));
+        g2.drawString(pausedText, x + 3, y + 3);
+        
+        // Draw text
+        g2.setColor(new Color(255, 255, 100));
+        g2.drawString(pausedText, x, y);
+        
+        g2.setFont(getFont().deriveFont(Font.PLAIN, 18f));
+        FontMetrics fm2 = g2.getFontMetrics();
+        String hint = "Press P to resume";
+        int x2 = (getWidth() - fm2.stringWidth(hint)) / 2;
+        g2.setColor(Color.WHITE);
+        g2.drawString(hint, x2, y + 40);
     }
 
     private void drawGameOver(Graphics2D g2) {
         String over = "Game Over!";
         String prompt = controlMode == ControlMode.VOICE ? "Say RESTART to play again" : "Press ENTER to restart";
 
-        g2.setColor(new Color(0, 0, 0, 170));
+        // Draw semi-transparent overlay with gradient
+        java.awt.GradientPaint overlayGradient = new java.awt.GradientPaint(
+                0, 0, new Color(0, 0, 0, 180),
+                0, getHeight(), new Color(20, 20, 40, 200)
+        );
+        g2.setPaint(overlayGradient);
         g2.fillRect(0, 0, getWidth(), getHeight());
 
-        g2.setColor(Color.WHITE);
-        g2.setFont(getFont().deriveFont(Font.BOLD, 48f));
+        // Draw "Game Over" with shadow
+        g2.setFont(getFont().deriveFont(Font.BOLD, 56f));
         FontMetrics fm = g2.getFontMetrics();
         int x = (getWidth() - fm.stringWidth(over)) / 2;
         int y = getHeight() / 2 - fm.getHeight();
+        
+        g2.setColor(new Color(0, 0, 0, 150));
+        g2.drawString(over, x + 4, y + 4);
+        g2.setColor(new Color(255, 100, 100));
         g2.drawString(over, x, y);
 
         g2.setFont(getFont().deriveFont(Font.PLAIN, 18f));
         FontMetrics fm2 = g2.getFontMetrics();
         int x2 = (getWidth() - fm2.stringWidth(prompt)) / 2;
-        int y2 = y + 40;
+        int y2 = y + 50;
+        g2.setColor(new Color(200, 200, 255));
         g2.drawString(prompt, x2, y2);
 
         // Score summary and new high indicator
         String summary = "Score: " + score + "   High: " + finalHighScore + "   Low: " + (finalLowScore == 0 ? "-" : Integer.toString(finalLowScore));
         int x3 = (getWidth() - fm2.stringWidth(summary)) / 2;
-        g2.drawString(summary, x3, y2 + 28);
+        g2.setColor(Color.WHITE);
+        g2.drawString(summary, x3, y2 + 35);
+        
         if (achievedNewHigh) {
-            String nh = "New HIGH SCORE!";
-            g2.setFont(getFont().deriveFont(Font.BOLD, 20f));
+            String nh = "★ NEW HIGH SCORE! ★";
+            g2.setFont(getFont().deriveFont(Font.BOLD, 24f));
             FontMetrics fm3 = g2.getFontMetrics();
             int x4 = (getWidth() - fm3.stringWidth(nh)) / 2;
-            g2.setColor(new Color(255, 215, 0));
-            g2.drawString(nh, x4, y2 + 54);
-            g2.setColor(Color.WHITE);
+            
+            // Pulsing effect with gradient
+            java.awt.GradientPaint highScoreGradient = new java.awt.GradientPaint(
+                    x4, y2 + 60, new Color(255, 230, 100),
+                    x4 + fm3.stringWidth(nh), y2 + 80, new Color(255, 180, 0)
+            );
+            g2.setPaint(highScoreGradient);
+            g2.drawString(nh, x4, y2 + 70);
         }
     }
 
     @Override
     public void actionPerformed(ActionEvent e) {
-        if (running) {
+        if (running && !paused) {
             if (controlMode == ControlMode.VOICE) {
                 applyVoiceDirectionIfAny();
             }
             moveSnake();
             checkFood();
             checkCollisions();
-        } else {
+        } else if (!running) {
             if (controlMode == ControlMode.VOICE) {
                 applyRestartIfAny();
             }
@@ -251,7 +388,7 @@ public final class GamePanel extends JPanel implements ActionListener {
     }
 
     private void applyRestartIfAny() {
-        if (voiceController == null) {
+        if (voiceController == null || !voiceController.isEnabled()) {
             return;
         }
         String cmd = voiceController.getCommand();
@@ -259,18 +396,20 @@ public final class GamePanel extends JPanel implements ActionListener {
             return;
         }
         if ("restart".equals(cmd)) {
+            System.out.println("GamePanel: Restarting game via voice command");
             startGame();
         }
     }
 
     private void applyVoiceDirectionIfAny() {
-        if (voiceController == null) {
+        if (voiceController == null || !voiceController.isEnabled()) {
             return;
         }
         String cmd = voiceController.getCommand();
         if (cmd == null) {
             return;
         }
+        System.out.println("GamePanel: Applying voice command: " + cmd);
         switch (cmd) {
             case "up":
                 if (direction != 'D') direction = 'U';
@@ -439,11 +578,19 @@ public final class GamePanel extends JPanel implements ActionListener {
     private final class KeyHandler extends KeyAdapter {
         @Override
         public void keyPressed(KeyEvent e) {
+            int key = e.getKeyCode();
+            
+            // Pause works for both keyboard and voice modes
+            if (key == KeyEvent.VK_P && running) {
+                paused = !paused;
+                return;
+            }
+            
             if (controlMode != ControlMode.KEYBOARD) {
                 return;
             }
-            int key = e.getKeyCode();
-            if (running) {
+            
+            if (running && !paused) {
                 switch (key) {
                     case KeyEvent.VK_UP:
                         if (direction != 'D') direction = 'U';
@@ -460,7 +607,7 @@ public final class GamePanel extends JPanel implements ActionListener {
                     default:
                         break;
                 }
-            } else {
+            } else if (!running) {
                 if (key == KeyEvent.VK_ENTER) {
                     startGame();
                 }

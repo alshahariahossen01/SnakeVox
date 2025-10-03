@@ -10,17 +10,19 @@ public final class VoiceController implements AutoCloseable {
 
     private final AtomicReference<String> lastCommand = new AtomicReference<>(null);
     private final AtomicBoolean running = new AtomicBoolean(false);
+    private final AtomicBoolean listening = new AtomicBoolean(false);
     private Thread workerThread;
 
     // Noise filtering parameters
-    private static final int REQUIRED_CONSECUTIVE_MATCHES = 2; // require same command twice
-    private static final long ACCEPT_COOLDOWN_MS = 500; // minimal time between accepted commands
+    private static final int REQUIRED_CONSECUTIVE_MATCHES = 1; // reduced for better responsiveness
+    private static final long ACCEPT_COOLDOWN_MS = 300; // reduced cooldown for faster response
     private String candidateCommand;
     private int consecutiveMatches;
     private long lastAcceptedAtMillis;
 
     // Reflection-based fields to avoid compile-time dependency when building without Maven
     private boolean enabled = false;
+    private String statusMessage = "Initializing...";
     private Class<?> configurationClass;
     private Class<?> recognizerClass;
     private Object recognizer;
@@ -31,6 +33,7 @@ public final class VoiceController implements AutoCloseable {
 
     public VoiceController(boolean autoStart) {
         try {
+            statusMessage = "Loading speech recognition...";
             configurationClass = Class.forName("edu.cmu.sphinx.api.Configuration");
             recognizerClass = Class.forName("edu.cmu.sphinx.api.LiveSpeechRecognizer");
 
@@ -46,15 +49,20 @@ public final class VoiceController implements AutoCloseable {
             configurationClass.getMethod("setUseGrammar", boolean.class)
                     .invoke(configuration, true);
 
+            statusMessage = "Initializing recognizer...";
             Constructor<?> ctor = recognizerClass.getConstructor(configurationClass);
             recognizer = ctor.newInstance(configuration);
             enabled = true;
+            statusMessage = "Ready";
             if (autoStart) {
                 start();
             }
+            System.out.println("VoiceController: Successfully initialized. Say UP, DOWN, LEFT, RIGHT, or RESTART.");
         } catch (Throwable t) {
-            enabled = false; // Sphinx not available; run in disabled mode
-            System.out.println("VoiceController: Sphinx not available (" + t.getClass().getSimpleName() + ") - voice disabled.");
+            enabled = false;
+            statusMessage = "Voice unavailable: " + t.getClass().getSimpleName();
+            System.err.println("VoiceController: Sphinx not available (" + t.getClass().getSimpleName() + ") - voice disabled.");
+            t.printStackTrace();
         }
     }
 
@@ -75,6 +83,9 @@ public final class VoiceController implements AutoCloseable {
             Method stopRecognition = recognizerClass.getMethod("stopRecognition");
             Method getResult = recognizerClass.getMethod("getResult");
             startRecognition.invoke(recognizer, true);
+            listening.set(true);
+            statusMessage = "Listening...";
+            System.out.println("VoiceController: Now listening for commands...");
             try {
                 while (running.get()) {
                     Object result = getResult.invoke(recognizer);
@@ -86,14 +97,20 @@ public final class VoiceController implements AutoCloseable {
                     if (hypothesisObj instanceof String) {
                         String hypothesis = (String) hypothesisObj;
                         String cmd = normalize(hypothesis);
+                        System.out.println("VoiceController: Heard: '" + hypothesis + "' -> '" + cmd + "'");
                         applyNoiseFilteredUpdate(cmd);
                     }
                 }
             } finally {
+                listening.set(false);
                 stopRecognition.invoke(recognizer);
+                statusMessage = "Stopped";
             }
         } catch (Throwable t) {
-            System.out.println("VoiceController: error in recognition loop: " + t.getMessage());
+            listening.set(false);
+            statusMessage = "Error: " + t.getMessage();
+            System.err.println("VoiceController: error in recognition loop: " + t.getMessage());
+            t.printStackTrace();
         }
     }
 
@@ -135,6 +152,18 @@ public final class VoiceController implements AutoCloseable {
 
     public String getCommand() {
         return lastCommand.get();
+    }
+
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    public boolean isListening() {
+        return listening.get();
+    }
+
+    public String getStatusMessage() {
+        return statusMessage;
     }
 
     public void stop() {
